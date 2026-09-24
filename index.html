@@ -55,9 +55,31 @@
            company logo both take flex:1, so the center block (header
            image + title) stays visually centered regardless of the
            company logo's width. */
+        /* ===== APP HEADER (logo + title, shrinks on scroll) =====
+           Flexbox, space-between: an empty left spacer and the right-hand
+           company logo both take flex:1, so the center block (header
+           image + title) stays visually centered regardless of the
+           company logo's width.
+
+           position:fixed (not sticky) on purpose: a sticky header still
+           occupies its own (changing) height in the document flow, so
+           shrinking it on scroll pulls page content upward, which nudges
+           scrollY (directly, and via the browser's scroll-anchoring
+           "correction"). That nudge can cross the shrink/expand threshold
+           again mid-scroll, flip the header back, nudge again, etc. --
+           the logo fluctuating/stretching while scrolling.
+           `overflow-anchor: none` alone (previous fix) reduces this in
+           Chrome but is unreliable, especially on older iOS Safari.
+           A fixed header never changes page flow when it resizes, so the
+           feedback loop can't happen at all, regardless of browser.
+           #appHeaderFlowSpacer (a new element below the header, NOT the
+           .app-header-spacer flex item inside it) reserves the header's
+           expanded height in the flow instead. */
         .app-header {
-            position: sticky;
+            position: fixed;
             top: 0;
+            left: 0;
+            right: 0;
             z-index: 50;
             background: #1a1a2e;
             display: flex;
@@ -65,14 +87,49 @@
             justify-content: space-between;
             gap: 22px;
             padding: 18px 20px;
-            margin: -20px -20px 15px -20px;
             transition: padding 0.25s ease, box-shadow 0.25s ease, gap 0.25s ease;
-            /* The header's height changes as it shrinks/grows. Without this,
-               the browser's scroll anchoring "helpfully" shifts scrollY to
-               compensate for that height change, which can push the page
-               back across the shrink/expand thresholds and cause the
-               header to flicker between sizes while scrolling. */
-            overflow-anchor: none;
+        }
+        .app-header-flow-spacer {
+            /* JS sets the exact height (header's expanded height + 15px gap)
+               on load/resize; this is just a reasonable pre-JS fallback. */
+            height: 151px;
+        }
+        @media (max-width: 640px) {
+            .app-header-flow-spacer { height: 149px; }
+        }
+        .install-banner {
+            position: relative;
+            z-index: 40;
+            background: #16213e;
+            color: #e0e0e0;
+            padding: 10px 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            font-size: 0.85rem;
+            text-align: center;
+            flex-wrap: wrap;
+            border-bottom: 1px solid #0f3460;
+        }
+        .install-banner-btn {
+            background: #00d4ff;
+            color: #0a0a1a;
+            border: none;
+            border-radius: 6px;
+            padding: 6px 14px;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 0.85rem;
+        }
+        .install-banner-close {
+            background: none;
+            border: none;
+            color: #888;
+            cursor: pointer;
+            font-size: 1rem;
+            padding: 0 4px;
+            line-height: 1;
         }
         .app-header.is-scrolled {
             padding: 8px 20px;
@@ -580,6 +637,14 @@
                 <img src="assets/company-logo.png?v=1" alt="Company logo" class="app-company-logo">
             </div>
         </h1>
+        <div id="appHeaderFlowSpacer" class="app-header-flow-spacer"></div>
+
+        <!-- INSTALL APP HINT (Android: real install button; iOS: manual instructions) -->
+        <div id="installBanner" class="install-banner hidden">
+            <span id="installBannerText"></span>
+            <button id="installBannerBtn" class="install-banner-btn hidden">📲 Install</button>
+            <button id="installBannerClose" class="install-banner-close" aria-label="Dismiss">✕</button>
+        </div>
 
         <!-- ADMIN PASSWORD DIALOG (hidden until triggered) -->
         <div id="adminPasswordOverlay" class="admin-overlay">
@@ -783,12 +848,12 @@
             <h2><span class="step-badge">STEP 0</span> Database File</h2>
             <p style="color:#888; font-size:0.85rem; margin-bottom:10px;">
                 The app has a <b>built-in database</b> and works immediately with no files needed.
-                To use updated data: place <b>database.json</b> in the same folder, or select it manually below.
+                To use updated data: place <b>units_pro.json</b> in an <b>assets</b> folder beside index.html, or select a database JSON file manually below.
             </p>
             <div id="dbMsg" class="status info">⏳ Loading database...</div>
 
             <div id="fallbackLoader" class="fallback-box hidden">
-                <p>💡 To override the built-in data, select your <b>database.json</b>:</p>
+                <p>💡 To override the built-in data, select your database JSON file:</p>
                 <div class="input-group">
                     <label>database.json:</label>
                     <input type="file" id="dbFile" accept=".json">
@@ -1663,16 +1728,28 @@
         }
 
         // ===== AUTO-LOAD VIA FETCH =====
+        // Returns true if a database file was found and applied, false otherwise.
         async function autoLoadDB(filename) {
             try {
                 const response = await fetch(filename);
                 if (!response.ok) throw new Error('Not found: ' + response.status);
                 const json = await response.json();
                 applyDatabase(json);
+                return true;
             } catch (err) {
-                // Fetch blocked or file not found -- embedded DB is already active, that's fine.
-                console.info('database.json not auto-loaded (normal for local files):', err.message);
-                // Show the manual picker as a soft option, not an error
+                // Fetch blocked or file not found -- caller decides what to try next.
+                console.info(filename + ' not auto-loaded (normal if missing/local file):', err.message);
+                return false;
+            }
+        }
+
+        // Tries assets/units_pro.json first (preferred location), then
+        // database.json at the app root (older/alternate location, kept for
+        // backward compatibility), before falling back to the manual file picker.
+        async function autoLoadAllDBs() {
+            const foundInAssets = await autoLoadDB('assets/units_pro.json');
+            const foundAtRoot = await autoLoadDB('database.json');
+            if (!foundInAssets && !foundAtRoot) {
                 document.getElementById('fallbackLoader').classList.remove('hidden');
             }
         }
@@ -1723,38 +1800,6 @@
 {
   "units": [
     {
-      "unitKey": "C114D-119-100",
-      "unitDesc": "C114D-119-100",
-      "gbRating": 114000,
-      "structLoad": 11900,
-      "beam": 195.75,
-      "A": 129,
-      "P": 113.94,
-      "C": 96.06,
-      "I": 95.98,
-      "K": 151.34,
-      "crankType": "Crank",
-      "crankEffect": 130823.20,
-      "crankLength": 78.74,
-      "B_Unbal": 247
-    },
-    {
-      "unitKey": "WFT-AMPSCOT114",
-      "unitDesc": "WFT-AMPSCOT114-API",
-      "gbRating": 114000,
-      "structLoad": 11400,
-      "beam": 0,
-      "A": 110.625,
-      "P": 102.8,
-      "C": 83,
-      "I": 94.13,
-      "K": 134.527,
-      "crankType": "Crank",
-      "crankEffect": 116961.00,
-      "crankLength": 0,
-      "B_Unbal": -265.81
-    },
-    {
       "unitKey": "C640-365-192TH",
       "unitDesc": "C640-365-192TH",
       "gbRating": 640000,
@@ -1769,59 +1814,13 @@
       "crankEffect": 508422.00,
       "crankLength": 111.02,
       "B_Unbal": -863
-    },
-    {
-      "unitKey": "C912D-365-192",
-      "unitDesc": "C912D-365-192",
-      "gbRating": 912000,
-      "structLoad": 36500,
-      "beam": 286.02,
-      "A": 210,
-      "P": 172.52,
-      "C": 120.31,
-      "I": 119.61,
-      "K": 211.89,
-      "crankType": "Crank",
-      "crankEffect": 508422.00,
-      "crankLength": 111.02,
-      "B_Unbal": -815
-    },
-    {
-      "unitKey": "C1280-427-192",
-      "unitDesc": "C1280-427-192",
-      "gbRating": 1280000,
-      "structLoad": 42700,
-      "beam": 286.02,
-      "A": 210,
-      "P": 172.52,
-      "C": 120.31,
-      "I": 120.31,
-      "K": 212.36,
-      "crankType": "Crank",
-      "crankEffect": 510489.00,
-      "crankLength": 111.02,
-      "B_Unbal": -762
     }
   ],
   "strokes": [
-    { "unitKey": "C114D-119-100", "strokeLength": 100, "R": 37 },
-    { "unitKey": "C114D-119-100", "strokeLength": 88, "R": 32 },
-    { "unitKey": "C114D-119-100", "strokeLength": 74, "R": 27 },
-    { "unitKey": "WFT-AMPSCOT114", "strokeLength": 100, "R": 36 },
-    { "unitKey": "WFT-AMPSCOT114", "strokeLength": 88, "R": 31 },
-    { "unitKey": "WFT-AMPSCOT114", "strokeLength": 74, "R": 26 },
     { "unitKey": "C640-365-192TH", "strokeLength": 192, "R": 53.03 },
     { "unitKey": "C640-365-192TH", "strokeLength": 162, "R": 46.14 },
     { "unitKey": "C640-365-192TH", "strokeLength": 134, "R": 39.25 },
-    { "unitKey": "C640-365-192TH", "strokeLength": 106, "R": 32.36 },
-    { "unitKey": "C912D-365-192", "strokeLength": 192, "R": 53.03 },
-    { "unitKey": "C912D-365-192", "strokeLength": 164, "R": 46.14 },
-    { "unitKey": "C912D-365-192", "strokeLength": 136, "R": 39.25 },
-    { "unitKey": "C912D-365-192", "strokeLength": 110, "R": 32.36 },
-    { "unitKey": "C1280-427-192", "strokeLength": 192, "R": 53.03 },
-    { "unitKey": "C1280-427-192", "strokeLength": 164, "R": 46.14 },
-    { "unitKey": "C1280-427-192", "strokeLength": 136, "R": 39.25 },
-    { "unitKey": "C1280-427-192", "strokeLength": 110, "R": 32.36 }
+    { "unitKey": "C640-365-192TH", "strokeLength": 106, "R": 32.36 }
   ],
   "counterweights": [
     { "cwType": "CW30", "weight": 520, "armLength": 0 },
@@ -1839,8 +1838,8 @@
             msg.className = 'status success';
             msg.textContent = '✅ Built-in database loaded. You can load database.json to override.';
 
-            // Step 2: try fetching database.json from same folder to override
-            autoLoadDB('database.json');
+            // Step 2: try fetching assets/units_pro.json (or database.json) to override
+            autoLoadAllDBs();
         }
 
         // ===== FALLBACK: MANUAL JSON FILE LOAD =====
@@ -3296,18 +3295,34 @@
         // ===== INIT =====
         window.addEventListener('DOMContentLoaded', initDatabases);
 
-        // ===== Shrinking sticky header on scroll =====
+        // ===== Shrinking fixed header on scroll =====
         (function () {
             const header = document.getElementById('pageTitle');
-            if (!header) return;
-            // Hysteresis: two thresholds instead of one, so the header shrinking
-            // (which changes its own height / the page layout) can't immediately
-            // push the scroll position back across a single trigger point and
-            // cause it to flicker between states.
+            const spacer = document.getElementById('appHeaderFlowSpacer');
+            if (!header || !spacer) return;
+            // Hysteresis: two thresholds instead of one, as extra insurance
+            // against flicker right at the trigger point.
             const SHRINK_AT = 60; // px scrolled before header shrinks
             const EXPAND_AT = 20; // px scrolled before it expands back (must be < SHRINK_AT)
             let isScrolled = false;
             let ticking = false;
+
+            // Header is position:fixed, so its own height no longer affects
+            // page layout/scrollY -- the spacer permanently reserves the
+            // header's EXPANDED height so content never jumps. Measure that
+            // expanded height (temporarily un-shrinking if needed) and keep
+            // the spacer in sync on load/resize.
+            function measureExpandedHeight() {
+                const wasScrolled = header.classList.contains('is-scrolled');
+                if (wasScrolled) header.classList.remove('is-scrolled');
+                const h = header.offsetHeight;
+                if (wasScrolled) header.classList.add('is-scrolled');
+                return h;
+            }
+
+            function syncSpacerHeight() {
+                spacer.style.height = (measureExpandedHeight() + 15) + 'px'; // +15 = old bottom gap
+            }
 
             function updateHeaderState() {
                 const y = window.scrollY || window.pageYOffset;
@@ -3327,8 +3342,68 @@
                 }
             }, { passive: true });
 
+            window.addEventListener('resize', syncSpacerHeight);
+
             // Set correct state on load (e.g. after a refresh mid-scroll)
+            syncSpacerHeight();
             updateHeaderState();
+        })();
+
+        // ===== INSTALL APP HINT =====
+        // Android/Chrome: capture the native beforeinstallprompt event and
+        // offer a real "Install" button. iOS Safari never fires that event
+        // and has no programmatic install API at all -- the only way to
+        // install there is Share -> Add to Home Screen, so we just show that
+        // instruction instead of a button.
+        (function () {
+            const banner = document.getElementById('installBanner');
+            const text = document.getElementById('installBannerText');
+            const installBtn = document.getElementById('installBannerBtn');
+            const closeBtn = document.getElementById('installBannerClose');
+            if (!banner || !text || !installBtn || !closeBtn) return;
+
+            const DISMISS_KEY = 'gbtorque_install_banner_dismissed';
+            if (localStorage.getItem(DISMISS_KEY) === '1') return;
+
+            const isStandalone = window.matchMedia('(display-mode: standalone)').matches
+                || window.navigator.standalone === true;
+            if (isStandalone) return;
+
+            const ua = window.navigator.userAgent;
+            const isIOS = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
+
+            let deferredPrompt = null;
+
+            function showBanner() { banner.classList.remove('hidden'); }
+            function dismiss() {
+                banner.classList.add('hidden');
+                localStorage.setItem(DISMISS_KEY, '1');
+            }
+            closeBtn.addEventListener('click', dismiss);
+
+            if (isIOS) {
+                text.textContent = '📲 Install this app: tap Share, then "Add to Home Screen"';
+                showBanner();
+            } else {
+                window.addEventListener('beforeinstallprompt', (e) => {
+                    e.preventDefault();
+                    deferredPrompt = e;
+                    text.textContent = '📲 Install this app for quick, offline access';
+                    installBtn.classList.remove('hidden');
+                    showBanner();
+                });
+
+                installBtn.addEventListener('click', async () => {
+                    if (!deferredPrompt) return;
+                    installBtn.disabled = true;
+                    deferredPrompt.prompt();
+                    await deferredPrompt.userChoice;
+                    deferredPrompt = null;
+                    dismiss();
+                });
+
+                window.addEventListener('appinstalled', dismiss);
+            }
         })();
     </script>
     <script>
