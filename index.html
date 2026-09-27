@@ -2085,6 +2085,97 @@
             return lines[1].includes(',') && lines[1].split(',').length === 2;
         }
 
+        // Parses Lufkin Automation/SAM, NOLEN Well Analyzer, and Lufkin
+        // Industries "Both Cards" (surface + downhole) .dat exports. Each
+        // uses a different header length/field order; all three place the
+        // SURFACE card's data as n loads then n positions right after the
+        // header (the "Both Cards" format has downhole/pump-card data
+        // trailing after that, which isn't used by this app and is simply
+        // left unread). Detected by content signature, then validated
+        // against the full surface data block (not just the first value)
+        // before being accepted. Add new profiles here as more .dat
+        // sources are found.
+        const DAT_FORMATS = [
+            {
+                name: 'LUFKIN',      // Lufkin Automation / SAM export (e.g. "Lufkin Automation" line 0), single card
+                headerLines: 9,
+                wellName: l => l[1] || '',
+                date: l => l[2] || '',
+                strokeLength: l => parseFloat(l[4]) || 0,
+                strokeTime: l => parseFloat(l[7]) || 0,
+                numPoints: l => parseInt(l[8]) || 0,
+                signature: l => /lufkin/i.test(l[0] || '') && !/both\s*cards?/i.test(l[2] || '')
+            },
+            {
+                name: 'NOLEN',        // "Generated From NOLEN Well Analyzer" export
+                headerLines: 12,
+                wellName: l => l[3] || '',
+                date: l => l[5] || '',
+                strokeLength: l => parseFloat(l[7]) || 0,
+                strokeTime: l => parseFloat(l[10]) || 0,
+                numPoints: l => parseInt(l[11]) || 0,
+                signature: l => l.slice(0, 8).some(x => /nolen/i.test(x))
+            },
+            {
+                name: 'LUFKIN_BOTH_CARDS', // "Lufkin Industries" / "Both Cards" export: surface + downhole card
+                headerLines: 10,
+                wellName: l => l[1] || '',
+                date: l => l[3] || '',
+                strokeLength: l => parseFloat(l[5]) || 0,
+                strokeTime: l => parseFloat(l[8]) || 0,
+                // This format has no explicit point-count field -- the surface
+                // card is always exactly 200 loads + 200 positions; whatever
+                // downhole-card data follows is ignored (not used by this app).
+                numPoints: () => 200,
+                signature: l => /lufkin/i.test(l[0] || '') && /both\s*cards?/i.test(l[2] || '')
+            }
+        ];
+
+        function tryDatFormat(lines, profile) {
+            const n = profile.numPoints(lines);
+            const headerLines = profile.headerLines;
+            if (!n || n < 10 || n > 5000) return null;
+            if (headerLines + 2 * n > lines.length) return null;
+            const strokeLength = profile.strokeLength(lines);
+            if (!(strokeLength > 0)) return null; // a real stroke length is never 0/NaN
+            const loadValues = [], positionValues = [];
+            for (let i = 0; i < n; i++) {
+                const v = parseFloat(lines[headerLines + i]);
+                if (isNaN(v)) return null;
+                loadValues.push(v);
+            }
+            for (let i = 0; i < n; i++) {
+                const v = parseFloat(lines[headerLines + n + i]);
+                if (isNaN(v)) return null;
+                positionValues.push(v);
+            }
+            const maxPos = Math.max(...positionValues), minPos = Math.min(...positionValues);
+            if (maxPos > strokeLength * 1.5 + 5 || minPos < -5) return null;
+            return {
+                format: profile.name,
+                wellName: profile.wellName(lines),
+                date: profile.date(lines),
+                strokeLength,
+                strokeTime: profile.strokeTime(lines),
+                numPoints: n,
+                loadValues,
+                positionValues
+            };
+        }
+
+        function parseLufkinFamilyDat(lines) {
+            const signatureMatches = DAT_FORMATS.filter(p => p.signature(lines));
+            for (const profile of signatureMatches) {
+                const parsed = tryDatFormat(lines, profile);
+                if (parsed) return parsed;
+            }
+            for (const profile of DAT_FORMATS) {
+                const parsed = tryDatFormat(lines, profile);
+                if (parsed) return parsed;
+            }
+            return null;
+        }
+
         document.getElementById('datFile').addEventListener('change', function(e) {
             const file = e.target.files[0];
             if (!file) return;
@@ -2111,25 +2202,18 @@
                         parsedData.positionValues = parsed.positionValues;
                         fileStrokeLength = parsedData.strokeLength;
                     } else {
-                        parsedData.wellName = lines[1] || '';
-                        parsedData.date = lines[2] || '';
-                        parsedData.strokeLength = parseFloat(lines[4]) || 0;
-                        parsedData.strokeTime = parseFloat(lines[7]) || 0;
-                        parsedData.numPoints = parseInt(lines[8]) || 0;
+                        const parsed = parseLufkinFamilyDat(lines);
+                        if (!parsed) {
+                            throw new Error('Unrecognized .DAT header format — could not locate a valid point count / data block.');
+                        }
+                        parsedData.wellName     = parsed.wellName;
+                        parsedData.date         = parsed.date;
+                        parsedData.strokeLength = parsed.strokeLength;
+                        parsedData.strokeTime   = parsed.strokeTime;
+                        parsedData.numPoints    = parsed.numPoints;
+                        parsedData.loadValues     = parsed.loadValues;
+                        parsedData.positionValues = parsed.positionValues;
                         fileStrokeLength = parsedData.strokeLength;
-
-                        const n = parsedData.numPoints;
-                        const headerLines = 9;
-                        parsedData.loadValues = [];
-                        for (let i = 0; i < n; i++) {
-                            const val = parseFloat(lines[headerLines + i]);
-                            if (!isNaN(val)) parsedData.loadValues.push(val);
-                        }
-                        parsedData.positionValues = [];
-                        for (let i = 0; i < n; i++) {
-                            const val = parseFloat(lines[headerLines + n + i]);
-                            if (!isNaN(val)) parsedData.positionValues.push(val);
-                        }
                     }
 
                     // ── License: deduct exactly 1 trial for this new file upload ──
