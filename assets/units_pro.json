@@ -102,9 +102,9 @@
     { "unitKey": "C1280-427-192", "strokeLength": 110, "R": 32.36 }
   ],
   "counterweights": [
-    { "cwType": "CW30", "weight": 520, "armLength": 0 },
-    { "cwType": "CW09", "weight": 2877, "armLength": 0 },
-    { "cwType": "CW03", "weight": 4597, "armLength": 0 },
-    { "cwType": "CW01", "weight": 5588, "armLength": 0 }
+    { "cwType": "CW30", "weight": 520, "armLength": 21.5 },
+    { "cwType": "CW09", "weight": 2877, "armLength": 38.5 },
+    { "cwType": "CW03", "weight": 4597, "armLength": 49 },
+    { "cwType": "CW01", "weight": 5588, "armLength": 49 }
   ]
 }
