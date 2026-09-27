@@ -131,6 +131,64 @@
             padding: 0 4px;
             line-height: 1;
         }
+        .export-pdf-btn {
+            background: #00d4ff;
+            color: #0a0a1a;
+            border: none;
+            border-radius: 6px;
+            padding: 8px 16px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            cursor: pointer;
+            float: right;
+        }
+        .export-pdf-btn:active { transform: translateY(1px); }
+
+        /* ===== PRINT / EXPORT-TO-PDF STYLESHEET =====
+           Triggered by exportReportToPdf() (uses the browser's native
+           print-to-PDF, so no external library or network access is
+           needed). Shows only: the header (with logos), Step 1's parsed
+           file info, and Steps 2/3/5/6 + the Results Dashboard -- exactly
+           as currently on screen. Everything else (welcome/license cards,
+           the database-file card, tab bar, install banner, buttons, the
+           raw file-upload control) is hidden. Colors are remapped to a
+           light, ink-friendly print palette; the dark-theme accent colors
+           (#00d4ff / #ffd700 / #00ff88) are darkened rather than dropped
+           so their meaning (optimized values, headings, success) still
+           reads on white. Chart canvases print as-is (their pixels are
+           drawn by JS, not styled by CSS, so they keep the dark theme). */
+        @media print {
+            @page { margin: 15mm; }
+            html, body { background: #fff !important; color: #222 !important; padding: 0 !important; }
+            #installBanner, .tab-nav, .export-pdf-btn, #status,
+            #step1Card > *:not(#fileInfo),
+            #tabMain > .card:not(#step1Card):not(#step2Card):not(#step3Card):not(#step5Card):not(#step6Card):not(#dashboardCard) {
+                display: none !important;
+            }
+            .app-header {
+                position: static !important;
+                box-shadow: none !important;
+                background: #fff !important;
+            }
+            .app-header-flow-spacer { display: none !important; }
+            .app-version-badge { display: none !important; }
+            h2, h3, .app-title-text, .section-title { color: #111 !important; }
+            .card {
+                background: #fff !important;
+                border: 1px solid #ccc !important;
+                box-shadow: none !important;
+                break-inside: avoid;
+            }
+            .parsed-data { background: #f7f7f7 !important; }
+            .parsed-data .label, label { color: #555 !important; }
+            .parsed-data .value { color: #111 !important; }
+            input, select { background: #fff !important; color: #111 !important; border: 1px solid #ccc !important; }
+            [style*="background:#0a0a1a"] { background: #f7f7f7 !important; border-color: #ccc !important; }
+            [style*="color:#00d4ff"] { color: #0077b6 !important; }
+            [style*="color:#ffd700"] { color: #946f00 !important; }
+            [style*="color:#00ff88"] { color: #0a8f4a !important; }
+            canvas { background: #fff; }
+        }
         .app-header.is-scrolled {
             padding: 8px 20px;
             gap: 14px;
@@ -1102,7 +1160,7 @@
 
         <!-- BOTTOM DASHBOARD: KEY RESULTS SUMMARY -->
         <div class="card hidden" id="dashboardCard">
-            <h2>📋 Results Dashboard</h2>
+            <h2>📋 Results Dashboard <button class="export-pdf-btn" onclick="exportReportToPdf()">📄 Export to PDF</button></h2>
 
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:24px; align-items:start;">
 
@@ -1531,6 +1589,31 @@
             document.getElementById('tabQuickCbe').classList.toggle('hidden', isMain);
             document.getElementById('tabBtnMain').classList.toggle('active', isMain);
             document.getElementById('tabBtnQuickCbe').classList.toggle('active', !isMain);
+        }
+
+        // ===== EXPORT REPORT TO PDF =====
+        // Uses the browser's native print-to-PDF (no library, no network
+        // needed -- works the same offline). The @media print stylesheet
+        // does the actual hiding/re-styling; this just makes sure the
+        // right tab is showing and the header prints at full size (not
+        // mid-shrink from scrolling), then restores the on-screen state
+        // afterwards so the export doesn't visibly change anything for
+        // the user once the print dialog closes.
+        function exportReportToPdf() {
+            switchTab('main');
+            const header = document.getElementById('pageTitle');
+            const wasScrolled = header && header.classList.contains('is-scrolled');
+            if (header) header.classList.remove('is-scrolled');
+
+            function restore() {
+                if (header && wasScrolled) header.classList.add('is-scrolled');
+                window.removeEventListener('afterprint', restore);
+            }
+            window.addEventListener('afterprint', restore);
+
+            // Give the browser a moment to apply the class change/layout
+            // before the print snapshot is taken.
+            setTimeout(() => window.print(), 50);
         }
 
         // ===== HIDDEN ADMIN MODE =====
