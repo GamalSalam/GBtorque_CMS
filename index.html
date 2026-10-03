@@ -131,6 +131,57 @@
             padding: 0 4px;
             line-height: 1;
         }
+        .print-btn {
+            background: #00d4ff;
+            color: #0a0a1a;
+            border: none;
+            border-radius: 6px;
+            padding: 8px 16px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            cursor: pointer;
+            float: right;
+        }
+        .print-btn:active { transform: translateY(1px); }
+
+        /* ===== PRINT STYLESHEET =====
+           Plain "print the whole page" -- triggered by printPage() (a
+           direct window.print(), no section curation or tab-forcing).
+           Only non-printable UI chrome that nobody would ever want on
+           paper is hidden (buttons, the install banner, nav tabs, the
+           raw file-upload control); everything else prints exactly as
+           shown on screen. Colors are remapped to a light, ink-friendly
+           print palette so the dark theme is still legible on paper. */
+        @media print {
+            @page { margin: 15mm; }
+            html, body { background: #fff !important; color: #222 !important; padding: 0 !important; }
+            #installBanner, .tab-nav, .print-btn, #status, #datFile, button {
+                display: none !important;
+            }
+            .app-header {
+                position: static !important;
+                box-shadow: none !important;
+                background: #fff !important;
+            }
+            .app-header-flow-spacer { display: none !important; }
+            .app-version-badge { display: none !important; }
+            h2, h3, .app-title-text, .section-title { color: #111 !important; }
+            .card {
+                background: #fff !important;
+                border: 1px solid #ccc !important;
+                box-shadow: none !important;
+                break-inside: avoid;
+            }
+            .parsed-data { background: #f7f7f7 !important; }
+            .parsed-data .label, label { color: #555 !important; }
+            .parsed-data .value { color: #111 !important; }
+            input, select { background: #fff !important; color: #111 !important; border: 1px solid #ccc !important; }
+            [style*="background:#0a0a1a"] { background: #f7f7f7 !important; border-color: #ccc !important; }
+            [style*="color:#00d4ff"] { color: #0077b6 !important; }
+            [style*="color:#ffd700"] { color: #946f00 !important; }
+            [style*="color:#00ff88"] { color: #0a8f4a !important; }
+            canvas { background: #fff; }
+        }
         .app-header.is-scrolled {
             padding: 8px 20px;
             gap: 14px;
@@ -1102,7 +1153,7 @@
 
         <!-- BOTTOM DASHBOARD: KEY RESULTS SUMMARY -->
         <div class="card hidden" id="dashboardCard">
-            <h2>📋 Results Dashboard</h2>
+            <h2>📋 Results Dashboard <button class="print-btn" onclick="printPage()">🖨️ Print</button></h2>
 
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:24px; align-items:start;">
 
@@ -1458,6 +1509,8 @@
             }
             try {
                 await callWorker('checkLicense', {});
+                // Key looks valid -- check for a matching per-client database.
+                loadDatabaseForKey(licenseKey);
             } catch (err) {
                 // callWorker already updated the badge/lock state on failure.
             }
@@ -1531,6 +1584,27 @@
             document.getElementById('tabQuickCbe').classList.toggle('hidden', isMain);
             document.getElementById('tabBtnMain').classList.toggle('active', isMain);
             document.getElementById('tabBtnQuickCbe').classList.toggle('active', !isMain);
+        }
+
+        // ===== PRINT PAGE =====
+        // Plain browser print-to-PDF of the whole page as currently shown --
+        // no tab-switching, no section hiding/curation (the @media print
+        // stylesheet above only suppresses non-printable UI chrome like
+        // buttons and nav). Un-shrinks the header first so it prints at
+        // full size rather than mid-shrink from scrolling, then restores
+        // the on-screen state afterwards.
+        function printPage() {
+            const header = document.getElementById('pageTitle');
+            const wasScrolled = header && header.classList.contains('is-scrolled');
+            if (header) header.classList.remove('is-scrolled');
+
+            function restore() {
+                if (header && wasScrolled) header.classList.add('is-scrolled');
+                window.removeEventListener('afterprint', restore);
+            }
+            window.addEventListener('afterprint', restore);
+
+            setTimeout(() => window.print(), 50);
         }
 
         // ===== HIDDEN ADMIN MODE =====
@@ -1754,6 +1828,34 @@
             }
         }
 
+        // ===== PER-CLIENT DATABASE (by license-key prefix) =====
+        // A license key like "CMS-engAliKey" carries a shared prefix (the
+        // part before the first "-") identifying which client/company it
+        // belongs to. If assets/<PREFIX>-units.json exists, it's loaded on
+        // top of the default database, so one deployment can serve several
+        // clients' unit databases from the same codebase. Keys with no
+        // hyphen, or whose file doesn't exist, just keep the default
+        // database -- this is silent/best-effort, never an error, since
+        // plenty of valid keys won't have (or need) a client-specific file.
+        function getKeyPrefix(key) {
+            if (!key || key.indexOf('-') === -1) return null;
+            const prefix = key.split('-')[0].trim();
+            return prefix ? prefix.toUpperCase() : null;
+        }
+
+        async function loadDatabaseForKey(key) {
+            const prefix = getKeyPrefix(key);
+            if (!prefix) return;
+            const loaded = await autoLoadDB(`assets/${prefix}-units.json`);
+            if (loaded) {
+                const msg = document.getElementById('dbMsg');
+                if (msg) {
+                    msg.className = 'status success';
+                    msg.textContent = `✅ ${prefix} client database loaded.`;
+                }
+            }
+        }
+
         function applyDatabase(json) {
             // json must have: { units:[...], strokes:[...], counterweights:[...] }
             if (json.units) {
@@ -1839,7 +1941,12 @@
             msg.textContent = '✅ Built-in database loaded. You can load database.json to override.';
 
             // Step 2: try fetching assets/units_pro.json (or database.json) to override
-            autoLoadAllDBs();
+            autoLoadAllDBs().then(() => {
+                // Step 3: if a license key is already saved (loadSavedLicenseKey
+                // runs before this on DOMContentLoaded), check for a matching
+                // per-client database and override with that if found.
+                loadDatabaseForKey(getLicenseKey());
+            });
         }
 
         // ===== FALLBACK: MANUAL JSON FILE LOAD =====
